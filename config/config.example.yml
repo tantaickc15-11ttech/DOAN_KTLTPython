@@ -1,0 +1,12 @@
+app:
+  title: "Wazuh Security Monitor"
+  demo_mode: true
+  auto_load_sample: true
+
+telegram:
+  enabled: false
+  bot_token: "YOUR_BOT_TOKEN"
+  chat_id: "YOUR_CHAT_ID"
+  minimum_level: 8
+  timeout_seconds: 10
+

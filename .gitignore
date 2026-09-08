@@ -1,0 +1,21 @@
+# Môi trường Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Cấu hình thật và dữ liệu phát sinh
+config/config.yml
+data/alerts.db
+*.db-journal
+
+# IDE và hệ điều hành
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Báo cáo kiểm thử
+.coverage
+htmlcov/
+
