@@ -15,7 +15,10 @@ data/alerts.db
 .DS_Store
 Thumbs.db
 
+# File khóa tạm do Microsoft Office tạo
+~$*.docx
+~$*.pptx
+
 # Báo cáo kiểm thử
 .coverage
 htmlcov/
-
