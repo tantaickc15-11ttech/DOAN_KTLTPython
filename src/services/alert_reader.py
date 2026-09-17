@@ -10,6 +10,7 @@ class AlertReader:
     """Hỗ trợ JSON array, một JSON object và định dạng JSON Lines."""
 
     @staticmethod
+    #Hỗ trợ đọc file Json đầu vào
     def read_file(file_path):
         path = Path(file_path)
         if not path.exists():
@@ -32,6 +33,7 @@ class AlertReader:
         return alerts, errors
 
     @staticmethod
+    #kiểm tra cú pháp JSON và chuyển dữ liệu từ chuỗi text thành Dir hoặc 1 list dir
     def _parse_records(text):
         try:
             data = json.loads(text)

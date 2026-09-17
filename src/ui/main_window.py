@@ -9,22 +9,22 @@ from matplotlib.figure import Figure
 
 from src.services.alert_reader import AlertReader
 from src.services.analysis_service import AnalysisService
-from src.services.telegram_service import TelegramService
+from integration.alerts_process import WazuhReceiver
+from src.models.alert import Alert
 
 
 class MainWindow(tk.Tk):
     """Giao diện chính của chương trình."""
 
-    def __init__(self, database, config, sample_file):
+    def __init__(self, database, sample_file):
         super().__init__()
         self.database = database
-        self.config_data = config
         self.sample_file = sample_file
-        self.telegram = TelegramService(config.get("telegram", {}))
+        self.wazuh_receiver = WazuhReceiver()
+        self.receiver_poll_after_id = None
         self.current_alerts = []
 
-        app_config = config.get("app", {})
-        self.title(app_config.get("title", "Wazuh Security Monitor"))
+        self.title("Wazuh Security Monitor")
         self.geometry("1200x760")
         self.minsize(1000, 650)
 
@@ -32,8 +32,10 @@ class MainWindow(tk.Tk):
         self._create_toolbar()
         self._create_notebook()
         self._create_status_bar()
-        self._auto_load_sample(app_config)
+        self._auto_load_sample()
         self.refresh_data()
+        self._start_wazuh_receiver()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _configure_style(self):
         style = ttk.Style(self)
@@ -82,7 +84,6 @@ class MainWindow(tk.Tk):
             ("total", "Tổng cảnh báo"),
             ("high", "Mức cao trở lên"),
             ("agents", "Số agent"),
-            ("sent", "Đã gửi Telegram"),
         ]
         for index, (key, title) in enumerate(items):
             card = ttk.LabelFrame(cards, padding=12)
@@ -141,7 +142,6 @@ class MainWindow(tk.Tk):
             "rule",
             "level",
             "description",
-            "telegram",
         )
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         headings = {
@@ -151,7 +151,6 @@ class MainWindow(tk.Tk):
             "rule": "Rule ID",
             "level": "Level",
             "description": "Mô tả",
-            "telegram": "Telegram",
         }
         widths = {
             "timestamp": 165,
@@ -160,7 +159,6 @@ class MainWindow(tk.Tk):
             "rule": 80,
             "level": 60,
             "description": 390,
-            "telegram": 90,
         }
         for column in columns:
             self.tree.heading(column, text=headings[column])
@@ -176,12 +174,26 @@ class MainWindow(tk.Tk):
         ttk.Label(
             self.settings_tab, text="Trạng thái cấu hình", style="Title.TLabel"
         ).pack(anchor="w", pady=(0, 12))
-        app_config = self.config_data.get("app", {})
-        telegram_config = self.config_data.get("telegram", {})
+        receiver_row = ttk.Frame(self.settings_tab, padding=8)
+        receiver_row.pack(fill="x")
+        ttk.Label(receiver_row, text="Nhận log Wazuh:", width=22).pack(side="left")
+        self.wazuh_status_var = tk.StringVar(value="Tắt")
+        ttk.Label(receiver_row, textvariable=self.wazuh_status_var, width=10).pack(
+            side="left"
+        )
+        self.wazuh_toggle_button = ttk.Button(
+            receiver_row,
+            text="Bật",
+            command=self._toggle_wazuh_receiver,
+            width=10,
+        )
+        self.wazuh_toggle_button.pack(side="left", padx=8)
+
         status_items = [
-            ("Chế độ demo", "Bật" if app_config.get("demo_mode", True) else "Tắt"),
-            ("Gửi Telegram", "Sẵn sàng" if self.telegram.is_ready() else "Đang tắt"),
-            ("Ngưỡng Telegram", str(telegram_config.get("minimum_level", 8))),
+            (
+                "Cổng nhận Wazuh",
+                str(self.wazuh_receiver.port),
+            ),
             ("Cơ sở dữ liệu", str(self.database.database_path)),
         ]
         for title, value in status_items:
@@ -190,14 +202,7 @@ class MainWindow(tk.Tk):
             ttk.Label(row, text=f"{title}:", width=22).pack(side="left")
             ttk.Label(row, text=value).pack(side="left")
 
-        note = (
-            "Để cấu hình Telegram, sao chép config/config.example.yml thành "
-            "config/config.yml, điền thông tin thật và bật enabled. "
-            "File config.yml không được đưa lên GitHub."
-        )
-        ttk.Label(self.settings_tab, text=note, wraplength=800).pack(
-            anchor="w", pady=16
-        )
+        self._update_wazuh_controls()
 
     def _create_status_bar(self):
         self.status_var = tk.StringVar(value="Sẵn sàng")
@@ -205,9 +210,77 @@ class MainWindow(tk.Tk):
             fill="x", side="bottom"
         )
 
-    def _auto_load_sample(self, app_config):
-        if not app_config.get("auto_load_sample", True):
+    def _start_wazuh_receiver(self):
+        if not self.wazuh_receiver.enabled:
+            self._update_wazuh_controls()
             return
+        try:
+            if self.wazuh_receiver.start():
+                self.status_var.set(
+                    f"Đang nhận log Wazuh tại cổng {self.wazuh_receiver.port}"
+                )
+                self._schedule_wazuh_poll()
+            self._update_wazuh_controls()
+        except OSError as error:
+            self.status_var.set(f"Không mở được receiver Wazuh: {error}")
+            self._update_wazuh_controls()
+
+    def _toggle_wazuh_receiver(self):
+        if self.wazuh_receiver.is_running:
+            self.wazuh_receiver.enabled = False
+            self.wazuh_receiver.stop()
+            if self.receiver_poll_after_id is not None:
+                self.after_cancel(self.receiver_poll_after_id)
+                self.receiver_poll_after_id = None
+            self.status_var.set("Đã tắt nhận log Wazuh")
+            self._update_wazuh_controls()
+            return
+
+        self.wazuh_receiver.enabled = True
+        self._start_wazuh_receiver()
+
+    def _update_wazuh_controls(self):
+        if not hasattr(self, "wazuh_status_var"):
+            return
+        running = self.wazuh_receiver.is_running
+        self.wazuh_status_var.set("Bật" if running else "Tắt")
+        self.wazuh_toggle_button.configure(text="Tắt" if running else "Bật")
+
+    def _schedule_wazuh_poll(self):
+        if self.receiver_poll_after_id is None:
+            self.receiver_poll_after_id = self.after(500, self._poll_wazuh_alerts)
+
+    def _poll_wazuh_alerts(self):
+        self.receiver_poll_after_id = None
+        inserted_total = 0
+        error_total = 0
+
+        for alert_data in self.wazuh_receiver.get_pending():
+            try:
+                alert = Alert.from_wazuh_dict(alert_data)
+                inserted, _duplicated = self.database.save_alerts([alert])
+                inserted_total += inserted
+            except (TypeError, ValueError, OSError) as error:
+                error_total += 1
+                print(f"Cảnh báo Wazuh không hợp lệ: {error}")
+
+        if inserted_total:
+            self.refresh_data()
+            self.status_var.set(f"Đã nhận {inserted_total} cảnh báo mới từ Wazuh")
+        elif error_total:
+            self.status_var.set(f"Bỏ qua {error_total} cảnh báo Wazuh không hợp lệ")
+
+        if self.wazuh_receiver.is_running:
+            self._schedule_wazuh_poll()
+
+    def _on_close(self):
+        if self.receiver_poll_after_id is not None:
+            self.after_cancel(self.receiver_poll_after_id)
+            self.receiver_poll_after_id = None
+        self.wazuh_receiver.stop()
+        self.destroy()
+
+    def _auto_load_sample(self):
         if self.database.get_alerts() or not self.sample_file.exists():
             return
         try:
@@ -226,36 +299,15 @@ class MainWindow(tk.Tk):
 
         try:
             alerts, errors = AlertReader.read_file(file_path)
-            known_ids = {
-                alert.alert_id for alert in self.database.get_alerts()
-            }
-            new_alerts = []
-            for alert in alerts:
-                if alert.alert_id not in known_ids:
-                    new_alerts.append(alert)
-                    known_ids.add(alert.alert_id)
-
             inserted, duplicated = self.database.save_alerts(alerts)
-            sent = self._send_new_alerts(new_alerts)
             self.refresh_data()
             messagebox.showinfo(
                 "Kết quả nhập dữ liệu",
                 f"Thêm mới: {inserted}\nTrùng: {duplicated}\n"
-                f"Bản ghi lỗi: {len(errors)}\nĐã gửi Telegram: {sent}",
+                f"Bản ghi lỗi: {len(errors)}",
             )
         except (OSError, ValueError) as error:
             messagebox.showerror("Lỗi nhập dữ liệu", str(error))
-
-    def _send_new_alerts(self, alerts):
-        sent = 0
-        for alert in alerts:
-            if not self.telegram.should_send(alert):
-                continue
-            success, _message = self.telegram.send_alert(alert)
-            if success:
-                self.database.mark_telegram_sent(alert.alert_id)
-                sent += 1
-        return sent
 
     def refresh_data(self):
         self.current_alerts = self.database.get_alerts()
@@ -307,7 +359,6 @@ class MainWindow(tk.Tk):
                     alert.rule_id,
                     alert.rule_level,
                     alert.description,
-                    "Đã gửi" if alert.telegram_sent else "Chưa gửi",
                 ),
             )
 
@@ -366,7 +417,6 @@ class MainWindow(tk.Tk):
             "Mô tả": alert.description,
             "Nhóm": ", ".join(alert.groups),
             "Nguồn log": alert.location,
-            "Đã gửi Telegram": "Có" if alert.telegram_sent else "Không",
         }
         for key, value in detail.items():
             text.insert("end", f"{key}: {value}\n")

@@ -6,6 +6,12 @@ __pycache__/
 
 # Cấu hình thật và dữ liệu phát sinh
 config/config.yml
+integration/project_config.conf
+integration/ossec.conf
+integration/custom-telegramalert-level
+integration/custom-telegramalert-level.py
+integration/Code manual_test_from_wazuh
+integration/README.md
 data/alerts.db
 *.db-journal
 
