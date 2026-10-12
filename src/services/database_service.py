@@ -66,9 +66,14 @@ class DatabaseService:
 
         keyword = keyword.strip()
         if keyword:
-            query += " AND (description LIKE ? OR rule_id LIKE ? OR agent_name LIKE ?)"
+            query += (
+                " AND (description LIKE ? OR rule_id LIKE ? "
+                "OR agent_name LIKE ? OR agent_ip LIKE ?)"
+            )
             search_value = f"%{keyword}%"
-            parameters.extend([search_value, search_value, search_value])
+            parameters.extend(
+                [search_value, search_value, search_value, search_value]
+            )
 
         if severity != "Tất cả":
             ranges = {

@@ -70,10 +70,12 @@ class DatabaseServiceTests(unittest.TestCase):
             first_result = database.save_alerts([alert])
             second_result = database.save_alerts([alert])
             filtered = database.get_alerts(severity="Cao", agent="TEST-PC")
+            filtered_by_ip = database.get_alerts(keyword="127.0.0.1")
 
         self.assertEqual((1, 0), first_result)
         self.assertEqual((0, 1), second_result)
         self.assertEqual(1, len(filtered))
+        self.assertEqual(1, len(filtered_by_ip))
 
 
 class TelegramServiceTests(unittest.TestCase):
